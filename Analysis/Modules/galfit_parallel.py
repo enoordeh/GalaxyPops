@@ -1,4 +1,5 @@
 # https://github.com/Grillard/GalfitPyWrap may be useful for setting up inputs
+from __future__ import division
 import sys
 sys.path.insert(0,'/data/emiln/XLSSU122/analysis/galfit/GalfitPyWrap')
 from GalfitPyWrap import galfitwrap as gf
@@ -14,7 +15,7 @@ from astropy.io import ascii
 from astropy import wcs
 from astropy.table import Table, hstack, join
 import os
-from __future__ import division
+
 import multiprocessing as mp
 
 def run_galfit_cosmos_parallel(row1,OG_df=cos_df_OG,zp=26,width=90,PSFf=1,use_psf=True,psf_file='tinytim_psf.fits',sigma_file='/sigma_meanexp_cutout.fits',save_name='rmssigmameanexp_w180_TESTING'):
