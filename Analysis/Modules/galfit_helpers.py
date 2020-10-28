@@ -67,236 +67,301 @@ def load_COSMOS_galaxy_catalog(filename, magthresh=24, verbose=True):
     return df
 
 
-# def run_galfit_cosmos_parallel(row1,OG_df=cos_df_OG,zp=26,width=90,HLwidth=False,PSFf=1,use_psf=True,\
-#                                timeout=300,verb=False,psf_file='tinytim_psf.fits',\
-#                                sigma_file='/sigma_meanexp_cutout.fits',cutout_file='/cutout.fits',\
-#                                save_name='rmssigmameanexp_w180_TESTING',\
-#                               PA_INIT=45, AR_INIT=0.5, MAG_INIT=21,DYNMAG=False, convbox='100 100',
-#                               constr='none',cutout_width = 200, badmask='none', MAGFIT=False, mag_thresh=5,
-#                                sky='Default',skyINIT=0, N=0):
-# #     cutout_width = 200 # ALWAYS KEEP THE SAME, PHYSICAL SIZE OF CUTOUTS FROM DATA_PREP
-# #     N = 0 # Extra width to search for neighbours in?
-# #     mag_thresh = 4 # Neighbours only fit if less than mag_thresh fainter than primary
-    
-#     df = OG_df
-#     r = row1
-#     ra = r.RA
-#     dec = r.DEC
-#     ID = int(r['NUMBER'])
-#     if badmask != 'none':
-#         print "Using bad pixel mask..."
-#         badmask = tdir+badmask
-#     if DYNMAG:
-#         MAG_INIT=np.round(r.F125W_Kron,decimals=2)
-#         og_mag=MAG_INIT
-#         print "Initializing",str(ID),"with F125W Kron magnitude:", MAG_INIT
-#     pixcrd = full_wcs.wcs_world2pix(ra,dec, 1)
-#     print pixcrd
-#     X = int(pixcrd[0])
-#     Y = int(pixcrd[1])
-    
-# #     ids_all.append(ID)
-#     CX = cutout_width
-#     CY = cutout_width
-    
-#     if MAGFIT:
-#         magf = 1
-#     else:
-#         magf = 0
+def run_galfit_parallel(params,fit_df=None,full_df=None,zp=26,
+    width=90,HLRwidth=False,PSFf=1,
+    usePSF=True,timeout=300,verbose=False,PSF_file=None,
+    sigma_file=None,data_file=None,
+    save_name=None,
+    PA_INIT=45, AR_INIT=0.5, MAG_INIT=21,useDYNMAG=True, convbox='50 50',
+    constraint_file='none',image_width = 200, badmask='none',
+    fitMagnitude=True, neighbourMagThresh=5,
+    sky='Default',sky_INIT=0, N=0, df_name='',
+    **kwargs):
+    '''
+    params = {
+        'fit_df':fit_df, # Dataframe with objects to be fit
+        'full_df':full_df, # Unfiltered source catalog used for fitting neighbours
+        'width':width, # Fitting region width in pixels
+        'HLRwidth':HLRwidth, # Fitting region width in # of HLR
+        'sigma_file':sigma_file, # Filename of sigma maps for sources
+        'data_file':data_file, # Filename for data cutouts for each source
+        'PSF_file':psf_file, # File_name of PSF to be used
+        'usePSF':True, # Use PSF in fitting?
+        'timeout':timeout, # Max runtime per object in seconds
+        'PSFf':PSFf, # Fine sampling factor
+        'verbose':verbose, # Verbose mode
+        'PA_INIT':PA_INIT, # Initial position angle
+        'AR_INIT':AR_INIT, # Initial axis ratio
+        'MAG_INIT':MAG_INIT, # Initial magnitude
+        'convbox':convbox, # Region to convolve PSF with in pixels (i.e. '100 100')
+        'ZP':ZP, # Zeropoint 
+        'constraint_file':constraint_file, # Galfit constraint filename
+        'image_width':image_width, # Size of data+sigma images being used (200 for COSMOS cutouts)
+        'useDYNMAG':DYNMAG, # Initialize magnitudes from catalog?
+        'badmask':badmask, # filename for bad pixel mask
+        'fitMagnitude':fitMagnitude, # Fit magnitudes?
+        'sky':sky, # Sky fitting mode for galfit (i.e. 'default')
+        'sky_INIT':sky_INIT, # Initial sky level
+        'neighbourMagThresh':neighbourMagThresh, # Additional magnitude threshhold to fit neighbours (i.e. 3 -> only neighbours with mag < source_mag+3 are fit)
+        'df_name': df_name, # Descriptive name of catalog being fit
+        'save_name':save_name # Filename to save results to, overrides default
+    }
+    '''
+    pool = mp.Pool(4) 
+    PSF_name = PSF_file.split('.')[0]
 
-#     print "ID", ID
-#     print "RA:",ra
-#     print "DEC:",dec
-#     print "Initial X:", X
-#     print "Initial Y:", Y
-#     print "Cutout X:", CX 
-#     print "Cutout Y:", CY
-#     print "Cutout width:", cutout_width
+    if save_name == None:
+        save_name = df_name+'_'+data_file[1:-5]+'_'+sigma_file[1:-5]+'_w'+\
+                    [str(HLRwidth)+'HLR' if HLRwidth!=False else str(width)][0]+'_'+PSF_name+'_'+\
+                    str(int(timeout/60))+'min_CONV'+convbox.split(' ')[0]+\
+                    ['_CONSTR' if constraint_file !='none' else ''][0]+['_DYNMAG' if useDYNMAG else ''][0]
 
-#     # tdir = '/data/emiln/XLSSU122/analysis/cosmos/galfit_results/'+str(ID)
-#     tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
+    print('SAVE_NAME:{}'.format(save_name))
+
+    results = [pool.apply_async(run_galfit, args=([r]), kwds=params) for idx, r in fit_df.iterrows()]
+    output = [p.get() for p in results]
+    pool.close()
+
+    new_df = pd.DataFrame(output,columns=['ID','ra','dec','re','ar','n','mag','sky','chi2nu','ErrorValue']) 
+    # ErrorValue of 124 = process timeout, 1 = GALFIT exception
+    results_root = '/data/emiln/XLSSC122_GalPops/Analysis/COSMOS/Results/'
+    save_file = results_root+save_name+'.csv'
+    print('Saving results to {}'.format(save_file))
+    new_df.to_csv(save_file,index=False)
+    print('Returning results as DataFrame')
+    return new_df
+
+
+def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
+    usePSF=True,timeout=300,verbose=False,PSF_file='tinytim_psf.fits',
+    sigma_file='/sigma_meanexp_cutout.fits',data_file='/cutout.fits',
+    save_name='rmssigmameanexp_w180_TESTING',
+    PA_INIT=45, AR_INIT=0.5, MAG_INIT=21,useDYNMAG=True, convbox='100 100',
+    constraint_file='none',image_width = 200, badmask='none',
+    fitMagnitude=True, neighbourMagThresh=5,
+    sky='Default',sky_INIT=0, N=0, **kwargs):
+#     cutout_width = 200 # ALWAYS KEEP THE SAME, PHYSICAL SIZE OF CUTOUTS FROM DATA_PREP
+#     N = 0 # Extra width to search for neighbours in?
+#     mag_thresh = 4 # Neighbours only fit if less than mag_thresh fainter than primary
     
-#     model=[{
-#     0: 'sersic',              #  object type
-#     1: str(CX)+' '+str(CY)+' 1 1', #  position x, y
-#     3: str(MAG_INIT)+' '+str(magf),            #  Integrated magnitude   
-#     4: '10 1',            #  R_e (half-light radius)   [pix]
-#     5: '4 1',            #  Sersic index n (de Vaucouleurs n=4) 
-#     9: str(AR_INIT)+' 1',            #  axis ratio (b/a)  
-#     10: str(PA_INIT)+' 1',         #  position angle (PA) [deg: Up=0, Left=90]
-#     'Z': 0                   #  output option (0 = resid., 1 = Don't subtract) 
-#     }]
+    df = full_df
+    r = row
+    ra = r.RA
+    dec = r.DEC
+    ID = int(r['NUMBER'])
+    if badmask != 'none':
+        print "Using bad pixel mask..."
+        badmask = tdir+badmask
+    if useDYNMAG:
+        MAG_INIT=np.round(r.F125W_Kron,decimals=2)
+        og_mag=MAG_INIT
+        print "Initializing",str(ID),"with F125W Kron magnitude:", MAG_INIT
+    # pixcrd = full_wcs.wcs_world2pix(ra,dec, 1)
+    # print pixcrd
+    # X = int(pixcrd[0])
+    # Y = int(pixcrd[1])
+    X,Y = r.X,r.Y
+    
+    CX, CY = image_width, image_width
+    
+    if fitMagnitude:
+        magf = 1
+    else:
+        magf = 0
 
-#     if HLwidth == False:
-#         bounds = [CX-width,CX+width,CY-width,CY+width]
-#         bounds2 = [X-width,X+width,Y-width,Y+width]
-#         print "Cutoutwidth (pixels):", width*2
-#         print "Cutoutwidth (arcsec):", width*2*0.06
-#     else: 
-#         width = int(np.ceil(HLwidth*r.HLR))
-#         bounds = [CX-width,CX+width,CY-width,CY+width]
-#         bounds2 = [X-width,X+width,Y-width,Y+width]
-#         print "Cutoutwidth (pixels) for ID",str(ID),":", width*2
-#         print "Cutoutwidth (arcsec) for ID",str(ID),":", width*2*0.06
+    print "ID", ID
+    print "RA:",ra
+    print "DEC:",dec
+    print "Initial X:", X
+    print "Initial Y:", Y
+    print "Cutout X:", CX 
+    print "Cutout Y:", CY
+    print "Cutout width:", image_width
+
+    # tdir = '/data/emiln/XLSSU122/analysis/cosmos/galfit_results/'+str(ID)
+    tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
+    
+    model=[{
+    0: 'sersic',              #  object type
+    1: str(CX)+' '+str(CY)+' 1 1', #  position x, y
+    3: str(MAG_INIT)+' '+str(magf),            #  Integrated magnitude   
+    4: '10 1',            #  R_e (half-light radius)   [pix]
+    5: '4 1',            #  Sersic index n (de Vaucouleurs n=4) 
+    9: str(AR_INIT)+' 1',            #  axis ratio (b/a)  
+    10: str(PA_INIT)+' 1',         #  position angle (PA) [deg: Up=0, Left=90]
+    'Z': 0                   #  output option (0 = resid., 1 = Don't subtract) 
+    }]
+
+    if HLRwidth == False:
+        bounds = [CX-width,CX+width,CY-width,CY+width]
+        bounds2 = [X-width,X+width,Y-width,Y+width]
+        print "Cutoutwidth (pixels):", width*2
+        print "Cutoutwidth (arcsec):", width*2*0.06
+    else: 
+        width = int(np.ceil(HLRwidth*r.HLR))
+        bounds = [CX-width,CX+width,CY-width,CY+width]
+        bounds2 = [X-width,X+width,Y-width,Y+width]
+        print "Cutoutwidth (pixels) for ID",str(ID),":", width*2
+        print "Cutoutwidth (arcsec) for ID",str(ID),":", width*2*0.06
         
-#     print "Bounds:", bounds
+    print "Bounds:", bounds
 
-#     # Find neighbours in full DF
-#     # Neighbour check needs to be done on original fits image / catalog
-#     ndf = df[(df['X']>(bounds2[0]-N)) & (df['X']<(bounds2[1]+N)) & (df['Y']>(bounds2[2]-N)) & (df['Y']<(bounds2[3]+N))
-#              & (df['NUMBER']!=ID)]
+    # Find neighbours in full DF
+    # Neighbour check needs to be done on original fits image / catalog
+    ndf = df[(df['X']>(bounds2[0]-N)) & (df['X']<(bounds2[1]+N)) & (df['Y']>(bounds2[2]-N)) & (df['Y']<(bounds2[3]+N))
+             & (df['NUMBER']!=ID)]
 
-#     print len(ndf),"NEIGHBOURS FOUND"
+    print len(ndf),"NEIGHBOURS FOUND"
 
-#     print "Adding additional model components for neighbours..."
-#     for row in ndf.iterrows():
-#         r = row[1]
-#         NX = r.X - X + cutout_width
-#         NY = r.Y - Y + cutout_width
-#         if DYNMAG:
-#             MAG_INIT=np.round(r.F125W_Kron,decimals=2)
-#             if np.isnan(MAG_INIT):
-#                 MAG_INIT=og_mag # Initialize with MAG of primary target
-#                 print "***NEIGHBOUR MAG NOT CATALOGED***"
-#             print "NEIGHBOUR initialized with F125W Kron magnitude:", MAG_INIT
-#             if MAG_INIT > og_mag+mag_thresh:
-#                 print "Neighbour mag too faint, not being fit"
-#                 continue # If mag is too faint, do not fit this object (Should eventually mask these)
+    print "Adding additional model components for neighbours..."
+    for row in ndf.iterrows():
+        r = row[1]
+        NX = r.X - X + image_width
+        NY = r.Y - Y + image_width
+        if useDYNMAG:
+            MAG_INIT=np.round(r.F125W_Kron,decimals=2)
+            if np.isnan(MAG_INIT):
+                MAG_INIT=og_mag # Initialize with MAG of primary target
+                print "***NEIGHBOUR MAG NOT CATALOGED***"
+            print "NEIGHBOUR initialized with F125W Kron magnitude:", MAG_INIT
+            if MAG_INIT > og_mag+neighbourMagThresh:
+                print "Neighbour mag too faint, not being fit"
+                continue # If mag is too faint, do not fit this object (Should eventually mask these)
                 
-#         seqnr = int(r['NUMBER'])
-#         model.append({
-#                 0: 'sersic',              #  object type
-#                 1: str(NX)+' '+str(NY)+' 1 1', #  position x, y
-#                 3: str(MAG_INIT)+' '+str(magf),            #  Integrated magnitude   
-#                 4: '10 1',            #  R_e (half-light radius)   [pix]
-#                 5: '4 1',            #  Sersic index n (de Vaucouleurs n=4) 
-#                 9: str(AR_INIT)+' 1',            #  axis ratio (b/a)  
-#                 10: str(PA_INIT)+' 1',         #  position angle (PA) [deg: Up=0, Left=90]
-#                 'Z': 0                   #  output option (0 = resid., 1 = Don't subtract) 
-#                 })
+        seqnr = int(r['NUMBER'])
+        model.append({
+                0: 'sersic',              #  object type
+                1: str(NX)+' '+str(NY)+' 1 1', #  position x, y
+                3: str(MAG_INIT)+' '+str(magf),            #  Integrated magnitude   
+                4: '10 1',            #  R_e (half-light radius)   [pix]
+                5: '4 1',            #  Sersic index n (de Vaucouleurs n=4) 
+                9: str(AR_INIT)+' 1',            #  axis ratio (b/a)  
+                10: str(PA_INIT)+' 1',         #  position angle (PA) [deg: Up=0, Left=90]
+                'Z': 0                   #  output option (0 = resid., 1 = Don't subtract) 
+                })
 
 
-#     if use_psf:
-#         print "Using PSF"
-#         O=gf.CreateFile(tdir+cutout_file, bounds, model,fout=tdir+'/input.feedme',\
-#                         Pimg=psf_file, Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06',PSFf=PSFf, convbox=convbox,
-#                        constr=constr, badmask=badmask, sky=sky,skyINIT=skyINIT)
-#         # convbox should be larger than PSF. f125_400 psf is (166,166)
-#     else:
-#         O=gf.CreateFile(tdir+cutout_file, bounds, model,fout=tdir+'/input.feedme',\
-#                         Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06', PSFf=PSFf, convbox=convbox, constr=constr,
-#                        badmask=badmask,sky=sky,skyINIT=skyINIT)
+    if usePSF:
+        print "Using PSF"
+        O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
+                        Pimg=PSF_file, Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06',PSFf=PSFf, convbox=convbox,
+                       constr=constraint_file, badmask=badmask, sky=sky,skyINIT=sky_INIT)
+        # convbox should be larger than PSF. f125_400 psf is (166,166)
+    else:
+        O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
+                        Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06', PSFf=PSFf, convbox=convbox, constr=constraint_file,
+                       badmask=badmask,sky=sky,skyINIT=sky_INIT)
 
-#     p,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verb, timeout=timeout)
-#     if EV==124: print "***PROCESS TIMEOUT***"
-#     bad_result = False
-#     print '****',ID,'****'
-#     try: 
-#         os.rename('out.fits',tdir+'/out_'+save_name+'.fits')
-#         os.rename('fit.log',tdir+'/fit_'+save_name+'.log')
-#         os.rename('galfit.01',tdir+'/galfit_'+save_name+'.01')
-#     except:
-#         print "***",ID,"Fit failed at GALFIT level***"
+    p,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verbose, timeout=timeout)
+    if EV==124: print "***PROCESS TIMEOUT***"
+    bad_result = False
+    print '****',ID,'****'
+    try: 
+        os.rename('out.fits',tdir+'/out_'+save_name+'.fits')
+        os.rename('fit.log',tdir+'/fit_'+save_name+'.log')
+        os.rename('galfit.01',tdir+'/galfit_'+save_name+'.01')
+    except:
+        print "***",ID,"Fit failed at GALFIT level***"
         
 
-#     try:
-# #         print "start try"
-#         print mods
-#         re_all = mods[0]['1_RE'].split(' ')
-#         ar_all = mods[0]['1_AR'].split(' ')
-#         n_all = mods[0]['1_N'].split(' ')
-#         m_all = mods[0]['1_MAG'].split(' ')
-#         s_all = mods[-1][str(len(mods))+'_SKY'].split(' ')
-# #         print "split('') complete"
-#         re_val = re_all[0].split('*')
-#         re_err_val = re_all[2].split('*')
-#         ar_val = ar_all[0].split('*')
-#         ar_err_val = ar_all[2].split('*')
-#         m_val = m_all[0].split('*')
-#         m_err_val = m_all[2].split('*')
-#         n_val = n_all[0].split('*')
-#         n_err_val = n_all[2].split('*')
-#         s_val = s_all[0].split('*')
-#         s_err_val = s_all[2].split('*')
-# #         print "split('*') complete"
+    try:
+#         print "start try"
+        print mods
+        re_all = mods[0]['1_RE'].split(' ')
+        ar_all = mods[0]['1_AR'].split(' ')
+        n_all = mods[0]['1_N'].split(' ')
+        m_all = mods[0]['1_MAG'].split(' ')
+        s_all = mods[-1][str(len(mods))+'_SKY'].split(' ')
+#         print "split('') complete"
+        re_val = re_all[0].split('*')
+        re_err_val = re_all[2].split('*')
+        ar_val = ar_all[0].split('*')
+        ar_err_val = ar_all[2].split('*')
+        m_val = m_all[0].split('*')
+        m_err_val = m_all[2].split('*')
+        n_val = n_all[0].split('*')
+        n_err_val = n_all[2].split('*')
+        s_val = s_all[0].split('*')
+        s_err_val = s_all[2].split('*')
+#         print "split('*') complete"
         
-#         print re_val
-#         print re_err_val
-#         print m_val
-#         print m_err_val
-#         print ar_val
-#         print ar_err_val
-#         print s_val
-#         print s_err_val
+        print re_val
+        print re_err_val
+        print m_val
+        print m_err_val
+        print ar_val
+        print ar_err_val
+        print s_val
+        print s_err_val
 
-#         if len(re_val)>1:
-# #             EV+=2**2
-#             print 'ID',str(ID),'len(re_val)>1', len(re_val)>1
+        if len(re_val)>1:
+#             EV+=2**2
+            print 'ID',str(ID),'len(re_val)>1', len(re_val)>1
 
-#         if len(ar_val)>1:
-# #             EV+=2**3
-#             print 'ID',str(ID),'len(ar_val)>1', len(ar_val)>1
+        if len(ar_val)>1:
+#             EV+=2**3
+            print 'ID',str(ID),'len(ar_val)>1', len(ar_val)>1
 
-#         if len(n_val)>1:
-# #             EV+=2**4
-#             print 'ID',str(ID),'len(n_val)>1', len(n_val)>1
+        if len(n_val)>1:
+#             EV+=2**4
+            print 'ID',str(ID),'len(n_val)>1', len(n_val)>1
 
-#         if len(m_val)>1:
-# #             EV+=2**5
-#             print 'ID',str(ID),'len(m_val)>1', len(m_val)>1
+        if len(m_val)>1:
+#             EV+=2**5
+            print 'ID',str(ID),'len(m_val)>1', len(m_val)>1
             
-#         if len(s_val)>1:
-# #             EV+=2**5
-#             print 'ID',str(ID),'len(s_val)>1', len(s_val)>1
+        if len(s_val)>1:
+#             EV+=2**5
+            print 'ID',str(ID),'len(s_val)>1', len(s_val)>1
             
-# #         print "EV updated for *"
+#         print "EV updated for *"
         
         
-# #         print 'int(np.ceil(len(re_val)/2.)-1)', int(np.ceil(len(re_val)/2.)-1)
-#         re = float(re_val[int(np.ceil(len(re_val)/2.)-1)])
-# #         print 're', re
+#         print 'int(np.ceil(len(re_val)/2.)-1)', int(np.ceil(len(re_val)/2.)-1)
+        re = float(re_val[int(np.ceil(len(re_val)/2.)-1)])
+#         print 're', re
         
-# #         print 'int(np.ceil(len(re_err_val)/2.)-1)', int(np.ceil(len(re_err_val)/2.)-1)
-#         re_err = float(re_err_val[int(np.ceil(len(re_err_val)/2.)-1)])
-# #         print 're_err', re_err
+#         print 'int(np.ceil(len(re_err_val)/2.)-1)', int(np.ceil(len(re_err_val)/2.)-1)
+        re_err = float(re_err_val[int(np.ceil(len(re_err_val)/2.)-1)])
+#         print 're_err', re_err
         
-# #         print int(np.ceil(len(ar_val)/2.)-1)
-#         ar = float(ar_val[int(np.ceil(len(ar_val)/2.)-1)])
-# #         print ar
-#         ar_err = float(ar_err_val[int(np.ceil(len(ar_err_val)/2.)-1)])
-# #         print ar_err
-#         n = float(n_val[int(np.ceil(len(n_val)/2.)-1)])
-# #         print n
-#         n_err = float(n_err_val[int(np.ceil(len(n_err_val)/2.)-1)])
-# #         print n_err
-#         m = float(m_val[int(np.ceil(len(m_val)/2.)-1)])
-# #         print m
-#         m_err = float(m_err_val[int(np.ceil(len(m_err_val)/2.)-1)])
+#         print int(np.ceil(len(ar_val)/2.)-1)
+        ar = float(ar_val[int(np.ceil(len(ar_val)/2.)-1)])
+#         print ar
+        ar_err = float(ar_err_val[int(np.ceil(len(ar_err_val)/2.)-1)])
+#         print ar_err
+        n = float(n_val[int(np.ceil(len(n_val)/2.)-1)])
+#         print n
+        n_err = float(n_err_val[int(np.ceil(len(n_err_val)/2.)-1)])
+#         print n_err
+        m = float(m_val[int(np.ceil(len(m_val)/2.)-1)])
+#         print m
+        m_err = float(m_err_val[int(np.ceil(len(m_err_val)/2.)-1)])
     
-#         s = float(s_val[int(np.ceil(len(s_val)/2.)-1)])
-#         s_err = float(s_err_val[int(np.ceil(len(s_err_val)/2.)-1)])
+        s = float(s_val[int(np.ceil(len(s_val)/2.)-1)])
+        s_err = float(s_err_val[int(np.ceil(len(s_err_val)/2.)-1)])
 
                        
-#     except:
-#         print "EXCEPTION"
-#         re_all = [-99,-99,-99]
-#         ar_all = re_all
-#         n_all = re_all
-#         m_all = re_all
-#         s_all = re_all
-#         re = float(re_all[0])
-#         re_err = float(re_all[2])
-#         ar = float(ar_all[0])
-#         ar_err = float(ar_all[2])
-#         n = float(n_all[0])
-#         n_err = float(n_all[2])
-#         m = float(m_all[0])
-#         m_err = float(m_all[2])
-#         s = float(s_all[0])
-#         s_err = float(s_all[2])
-#         EV+=999
+    except:
+        print "EXCEPTION"
+        re_all = [-99,-99,-99]
+        ar_all = re_all
+        n_all = re_all
+        m_all = re_all
+        s_all = re_all
+        re = float(re_all[0])
+        re_err = float(re_all[2])
+        ar = float(ar_all[0])
+        ar_err = float(ar_all[2])
+        n = float(n_all[0])
+        n_err = float(n_all[2])
+        m = float(m_all[0])
+        m_err = float(m_all[2])
+        s = float(s_all[0])
+        s_err = float(s_all[2])
+        EV+=999
 
-#     return ID,ra,dec, re, ar, n, m, s, chi2nu, EV
+    return ID,ra,dec, re, ar, n, m, s, chi2nu, EV
 
 # def showme3(oimg,fignum=None):
 #     vm = np.percentile(oimg[1].data,99)
