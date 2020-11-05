@@ -15,7 +15,8 @@ from astropy.table import Table, hstack, join
 import multiprocessing as mp
 import logging as log
 
-def load_COSMOS_galaxy_catalog(filename, magthresh=24, verbose=True):
+def load_COSMOS_galaxy_catalog(filename, mag='F125W_Kron', magthresh=24, z=1.98,
+    z_thresh=None, goodfit=True, overwrite=False, verbose=True):
     '''
     Load COSMOS galaxy catalog into a Pandas DataFrame formatted for use with Galfit.
 
@@ -28,7 +29,7 @@ def load_COSMOS_galaxy_catalog(filename, magthresh=24, verbose=True):
         df - Catalog formatted as a Pandas DataFrame formatted for use with Galfit
 
     TODO:
-        Allow filtering by redshift
+        Allow filtering by redshift 
     '''
 
     if verbose:
@@ -40,18 +41,29 @@ def load_COSMOS_galaxy_catalog(filename, magthresh=24, verbose=True):
         vprint = lambda *a: None      # do-nothing function
 
     save_root = '/data/emiln/XLSSC122_GalPops/Data/COSMOS/Products/catalogs/'
-    save_name = '{}magthresh{}.csv'.format(save_root,magthresh)
+    if z_thresh:
+        save_name = '{}magthresh{}_z{}_zthresh{}.csv'.format(save_root,magthresh,z,z_thresh)
+    else:
+        save_name = '{}magthresh{}.csv'.format(save_root,magthresh)
 
     vprint('Checking if catalog exists at {}'.format(save_name))
-    if os.path.exists(save_name):
+    if os.path.exists(save_name) and (not overwrite):
         vprint('Catalog already exists, returning DataFrame')
         return pd.read_csv(save_name)
     else:
         vprint('Catalog does not exist')
         vprint('Creating catalog...')
         df = pd.read_csv(filename)
-        vprint("Filtering objects to mag<{}".format(magthresh))
-        df = df[df['mag']<magthresh]
+        vprint("Filtering objects to {}<{}".format(mag,magthresh))
+        # df = df[df['mag']<magthresh] # 'mag' is vanderwels catalog mag
+        df = df[df[mag]<magthresh]
+        if z_thresh:
+            vprint("Filtering objects to {}<z<{}".format(z-z_thresh,z+z_thresh))
+            df = df[abs(df['z_best']-z) < z_thresh]
+        if goodfit:
+            vprint("Filtering to objects with good catalog fits")
+            df = df[(df['dn']/df['n'])<0.2]
+            df = df[df['f']==0] # Flag for good fit
 
         cos_data_root = '/data/emiln/XLSSC122_GalPops/Data/Raw/COSMOS/'
         cos_file = cos_data_root+'hlsp_candels_hst_wfc3_cos-tot_f125w_v1.0_drz.fits'
@@ -107,15 +119,16 @@ def run_galfit_parallel(params,fit_df=None,full_df=None,zp=26,
         'save_name':save_name # Filename to save results to, overrides default
     }
     '''
+    
     pool = mp.Pool(4) 
-    PSF_name = PSF_file.split('.')[0]
+    PSF_name = PSF_file.split('/')[-1].split('.')[0]
 
     if save_name == None:
         save_name = df_name+'_'+data_file[1:-5]+'_'+sigma_file[1:-5]+'_w'+\
                     [str(HLRwidth)+'HLR' if HLRwidth!=False else str(width)][0]+'_'+PSF_name+'_'+\
                     str(int(timeout/60))+'min_CONV'+convbox.split(' ')[0]+\
                     ['_CONSTR' if constraint_file !='none' else ''][0]+['_DYNMAG' if useDYNMAG else ''][0]
-
+        params['save_name'] = save_name
     print('SAVE_NAME:{}'.format(save_name))
 
     results = [pool.apply_async(run_galfit, args=([r]), kwds=params) for idx, r in fit_df.iterrows()]
@@ -149,6 +162,8 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
     ra = r.RA
     dec = r.DEC
     ID = int(r['NUMBER'])
+    tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
+    
     if badmask != 'none':
         print "Using bad pixel mask..."
         badmask = tdir+badmask
@@ -178,8 +193,7 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
     print "Cutout Y:", CY
     print "Cutout width:", image_width
 
-    # tdir = '/data/emiln/XLSSU122/analysis/cosmos/galfit_results/'+str(ID)
-    tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
+
     
     model=[{
     0: 'sersic',              #  object type
@@ -226,9 +240,9 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
             print "NEIGHBOUR initialized with F125W Kron magnitude:", MAG_INIT
             if MAG_INIT > og_mag+neighbourMagThresh:
                 print "Neighbour mag too faint, not being fit"
-                continue # If mag is too faint, do not fit this object (Should eventually mask these)
+                continue # If mag is too faint, do not fit this object 
                 
-        seqnr = int(r['NUMBER'])
+        # seqnr = int(r['NUMBER'])
         model.append({
                 0: 'sersic',              #  object type
                 1: str(NX)+' '+str(NY)+' 1 1', #  position x, y
@@ -244,22 +258,25 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
     if usePSF:
         print "Using PSF"
         O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
-                        Pimg=PSF_file, Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06',PSFf=PSFf, convbox=convbox,
+                        Pimg=PSF_file, Simg=tdir+sigma_file, Oimg=tdir+'/out.fits', ZP=zp, scale='0.06 0.06',PSFf=PSFf, convbox=convbox,
                        constr=constraint_file, badmask=badmask, sky=sky,skyINIT=sky_INIT)
         # convbox should be larger than PSF. f125_400 psf is (166,166)
-    else:
-        O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
-                        Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06', PSFf=PSFf, convbox=convbox, constr=constraint_file,
-                       badmask=badmask,sky=sky,skyINIT=sky_INIT)
-
-    p,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verbose, timeout=timeout)
+    # else:
+    #     O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
+    #                     Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06', PSFf=PSFf, convbox=convbox, constr=constraint_file,
+    #                    badmask=badmask,sky=sky,skyINIT=sky_INIT)
+    cwd = tdir
+    p,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verbose, outfile=tdir+'/out.fits',timeout=timeout,cwd=tdir)
     if EV==124: print "***PROCESS TIMEOUT***"
     bad_result = False
     print '****',ID,'****'
     try: 
-        os.rename('out.fits',tdir+'/out_'+save_name+'.fits')
-        os.rename('fit.log',tdir+'/fit_'+save_name+'.log')
-        os.rename('galfit.01',tdir+'/galfit_'+save_name+'.01')
+        # os.rename('out.fits',tdir+'/out_'+save_name+'.fits')
+        # os.rename('fit.log',tdir+'/fit_'+save_name+'.log')
+        # os.rename('galfit.01',tdir+'/galfit_'+save_name+'.01')
+        os.rename(tdir+'/out.fits',tdir+'/out_'+save_name+'.fits')
+        os.rename(tdir+'/fit.log',tdir+'/fit_'+save_name+'.log')
+        os.rename(tdir+'/galfit.01',tdir+'/galfit_'+save_name+'.params')
     except:
         print "***",ID,"Fit failed at GALFIT level***"
         
