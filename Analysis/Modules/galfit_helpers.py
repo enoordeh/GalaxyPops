@@ -15,6 +15,75 @@ from astropy.table import Table, hstack, join
 import multiprocessing as mp
 import logging as log
 
+
+def load_3DHST_galaxy_catalog(filename, mag='F140W', magthresh=24, z=2.00,
+    z_thresh=None, goodfit=True, overwrite=False, verbose=True):
+    '''
+    Load 3DHST galaxy catalog into a Pandas DataFrame formatted for use with Galfit.
+
+   Args:
+        filename (str): File location of csv catalog 
+        magthresh (int): A magnitude threshold to filter catalog by (default is 24)
+        verbose (bool): Print logging info (default is True)
+        z (float): Central redshift to select (default is 1.98)
+        z_thresh (float): Width of selection around z (default is None)
+        goodfit (bool): Only allow objects with cataloged good fits (default is True)
+        overwrite (bool): Overwrite saved version of catalog (default is False)
+
+    Returns:
+        df - Catalog formatted as a Pandas DataFrame formatted for use with Galfit
+    '''
+
+    if verbose:
+        def vprint(*args):
+            for arg in args:
+                print arg,
+            print
+    else:   
+        vprint = lambda *a: None      # do-nothing function
+
+    save_root = '/data/emiln/XLSSC122_GalPops/Data/3DHST/Products/catalogs/'
+    if z_thresh:
+        save_name = '{}magthresh{}_z{}_zthresh{}.csv'.format(save_root,magthresh,z,z_thresh)
+    elif magthresh and not z_thresh:
+        save_name = '{}magthresh{}.csv'.format(save_root,magthresh)
+    else:
+        save_name = '{}nothresh.csv'.format(save_root)
+
+    vprint('Checking if catalog exists at {}'.format(save_name))
+    if os.path.exists(save_name) and (not overwrite):
+        vprint('Catalog already exists, returning DataFrame')
+        return pd.read_csv(save_name)
+    else:
+        vprint('Catalog does not exist')
+        vprint('Creating catalog...')
+        df = pd.read_csv(filename,header=0,delim_whitespace=True,skiprows=[1,2,3])
+        df['F140W'] = 25.0 - 2.5 * np.log10(df['f_F140W'])
+        df['F140W_fixed'] = df['F140W']-1.465
+        df['X'] = df['x']
+        df['Y'] = df['y']
+        df['ID'] = df['id']
+        df['RA'] = df['ra']
+        df['DEC'] = df['dec']
+        if magthresh:
+            vprint("Filtering objects to {}<{}".format(mag,magthresh))
+            df = df[(df[mag]<magthresh) & (df[mag]>15)]
+        if z_thresh:
+            vprint("Filtering objects to {}<z<{}".format(z-z_thresh,z+z_thresh))
+            z_df = pd.read_csv(save_root+'cosmos_3dhst.v4.1.cats/Catalog/cosmos_3dhst_v4.1.5_catalogs/cosmos_3dhst.v4.1.5.zbest.fout',delim_whitespace=True)
+            df = df.merge(z_df,on='id',how='inner')
+            df = df[abs(df['z']-z) < z_thresh]
+        if goodfit:
+            vprint("Filtering to objects with good catalog fits")
+            df = df[df['use_phot']==1]
+            df = df[df['flags']<2] # Flag for good fit
+
+        vprint('Saving catalog to {}'.format(save_name))
+        df.to_csv(save_name,index=False)
+        vprint('Returning DataFrame')
+
+    return df
+
 def load_COSMOS_galaxy_catalog(filename, mag='F125W_Kron', magthresh=24, z=1.98,
     z_thresh=None, goodfit=True, overwrite=False, verbose=True):
     '''
@@ -24,12 +93,13 @@ def load_COSMOS_galaxy_catalog(filename, mag='F125W_Kron', magthresh=24, z=1.98,
         filename (str): File location of csv catalog 
         magthresh (int): A magnitude threshold to filter catalog by (default is 24)
         verbose (bool): Print logging info (default is True)
+        z (float): Central redshift to select (default is 1.98)
+        z_thresh (float): Width of selection around z (default is None)
+        goodfit (bool): Only allow objects with cataloged good fits (default is True)
+        overwrite (bool): Overwrite saved version of catalog (default is False)
 
     Returns:
         df - Catalog formatted as a Pandas DataFrame formatted for use with Galfit
-
-    TODO:
-        Allow filtering by redshift 
     '''
 
     if verbose:
@@ -79,7 +149,7 @@ def load_COSMOS_galaxy_catalog(filename, mag='F125W_Kron', magthresh=24, z=1.98,
     return df
 
 
-def run_galfit_parallel(params,fit_df=None,full_df=None,zp=26,
+def run_galfit_parallel(params,survey='COSMOS',fit_df=None,full_df=None,zp=26,
     width=90,HLRwidth=False,PSFf=1,
     usePSF=True,timeout=300,verbose=False,PSF_file=None,
     sigma_file=None,data_file=None,
@@ -91,6 +161,7 @@ def run_galfit_parallel(params,fit_df=None,full_df=None,zp=26,
     **kwargs):
     '''
     params = {
+        'survey':survey, # {'COSMOS','3DHST','HST'} default is 'COSMOS'
         'fit_df':fit_df, # Dataframe with objects to be fit
         'full_df':full_df, # Unfiltered source catalog used for fitting neighbours
         'width':width, # Fitting region width in pixels
@@ -131,13 +202,14 @@ def run_galfit_parallel(params,fit_df=None,full_df=None,zp=26,
         params['save_name'] = save_name
     print('SAVE_NAME:{}'.format(save_name))
 
-    results = [pool.apply_async(run_galfit, args=([r]), kwds=params) for idx, r in fit_df.iterrows()]
+    results = [pool.apply_async(run_galfit, args=([r]), kwds=params) for _, r in fit_df.iterrows()]
     output = [p.get() for p in results]
     pool.close()
 
     new_df = pd.DataFrame(output,columns=['ID','ra','dec','re','ar','n','mag','sky','chi2nu','ErrorValue']) 
     # ErrorValue of 124 = process timeout, 1 = GALFIT exception
-    results_root = '/data/emiln/XLSSC122_GalPops/Analysis/COSMOS/Results/'
+    # results_root = '/data/emiln/XLSSC122_GalPops/Analysis/COSMOS/Results/'
+    results_root = '/data/emiln/XLSSC122_GalPops/Analysis/'+survey+'/Results/'
     save_file = results_root+save_name+'.csv'
     print('Saving results to {}'.format(save_file))
     new_df.to_csv(save_file,index=False)
@@ -145,7 +217,7 @@ def run_galfit_parallel(params,fit_df=None,full_df=None,zp=26,
     return new_df, save_name
 
 
-def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
+def run_galfit(row,survey='COSMOS',full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
     usePSF=True,timeout=300,verbose=False,PSF_file='tinytim_psf.fits',
     sigma_file='/sigma_meanexp_cutout.fits',data_file='/cutout.fits',
     save_name='rmssigmameanexp_w180_TESTING',
@@ -161,16 +233,24 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
     r = row
     ra = r.RA
     dec = r.DEC
-    ID = int(r['NUMBER'])
-    tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
+    if survey == 'COSMOS': IDname = 'NUMBER'
+    if survey == '3DHST': IDname = 'id' 
+    ID = int(r[IDname])
+    # tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
+    tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/'+survey+'/galfit_results/'+str(ID)
     
     if badmask != 'none':
         print "Using bad pixel mask..."
         badmask = tdir+badmask
     if useDYNMAG:
-        MAG_INIT=np.round(r.F125W_Kron,decimals=2)
-        og_mag=MAG_INIT
-        print "Initializing",str(ID),"with F125W Kron magnitude:", MAG_INIT
+        if survey == '3DHST':
+            MAG_INIT=np.round(r.F140W,decimals=2)
+            og_mag=MAG_INIT
+            print "Initializing",str(ID),"with F140W Kron magnitude:", MAG_INIT
+        else:
+            MAG_INIT=np.round(r.F125W_Kron,decimals=2)
+            og_mag=MAG_INIT
+            print "Initializing",str(ID),"with F125W Kron magnitude:", MAG_INIT
     # pixcrd = full_wcs.wcs_world2pix(ra,dec, 1)
     # print pixcrd
     # X = int(pixcrd[0])
@@ -212,7 +292,8 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
         print "Cutoutwidth (pixels):", width*2
         print "Cutoutwidth (arcsec):", width*2*0.06
     else: 
-        width = int(np.ceil(HLRwidth*r.HLR))
+        if survey == 'COSMOS': width = int(np.ceil(HLRwidth*r.HLR))
+        if survey == '3DHST': width = int(np.ceil(HLRwidth*r.flux_radius))
         bounds = [CX-width,CX+width,CY-width,CY+width]
         bounds2 = [X-width,X+width,Y-width,Y+width]
         print "Cutoutwidth (pixels) for ID",str(ID),":", width*2
@@ -222,8 +303,10 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
 
     # Find neighbours in full DF
     # Neighbour check needs to be done on original fits image / catalog
+    # ndf = df[(df['X']>(bounds2[0]-N)) & (df['X']<(bounds2[1]+N)) & (df['Y']>(bounds2[2]-N)) & (df['Y']<(bounds2[3]+N))
+    #          & (df['NUMBER']!=ID)]
     ndf = df[(df['X']>(bounds2[0]-N)) & (df['X']<(bounds2[1]+N)) & (df['Y']>(bounds2[2]-N)) & (df['Y']<(bounds2[3]+N))
-             & (df['NUMBER']!=ID)]
+             & (df[IDname]!=ID)]
 
     print len(ndf),"NEIGHBOURS FOUND"
 
@@ -233,11 +316,12 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
         NX = r.X - X + image_width
         NY = r.Y - Y + image_width
         if useDYNMAG:
-            MAG_INIT=np.round(r.F125W_Kron,decimals=2)
+            if survey == '3DHST': MAG_INIT=np.round(r.F140W,decimals=2)
+            if survey == 'COSMOS': MAG_INIT=np.round(r.F125W_Kron,decimals=2)
             if np.isnan(MAG_INIT):
                 MAG_INIT=og_mag # Initialize with MAG of primary target
                 print "***NEIGHBOUR MAG NOT CATALOGED***"
-            print "NEIGHBOUR initialized with F125W Kron magnitude:", MAG_INIT
+            print "NEIGHBOUR initialized with magnitude:", MAG_INIT
             if MAG_INIT > og_mag+neighbourMagThresh:
                 print "Neighbour mag too faint, not being fit"
                 continue # If mag is too faint, do not fit this object 
@@ -265,10 +349,8 @@ def run_galfit(row,full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
     #     O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
     #                     Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06', PSFf=PSFf, convbox=convbox, constr=constraint_file,
     #                    badmask=badmask,sky=sky,skyINIT=sky_INIT)
-    cwd = tdir
     p,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verbose, outfile=tdir+'/out.fits',timeout=timeout,cwd=tdir)
     if EV==124: print "***PROCESS TIMEOUT***"
-    bad_result = False
     print '****',ID,'****'
     try: 
         # os.rename('out.fits',tdir+'/out_'+save_name+'.fits')
