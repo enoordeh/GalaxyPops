@@ -149,7 +149,7 @@ def load_COSMOS_galaxy_catalog(filename, mag='F125W_Kron', magthresh=24, z=1.98,
     return df
 
 
-def run_galfit_parallel(params,survey='COSMOS',fit_df=None,full_df=None,zp=26,
+def run_galfit_parallel(params,survey='COSMOS',fit_df=None,full_df=None,ZP=26,
     width=90,HLRwidth=False,PSFf=1,
     usePSF=True,timeout=300,verbose=False,PSF_file=None,
     sigma_file=None,data_file=None,
@@ -217,7 +217,7 @@ def run_galfit_parallel(params,survey='COSMOS',fit_df=None,full_df=None,zp=26,
     return new_df, save_name
 
 
-def run_galfit(row,survey='COSMOS',full_df=None,zp=26,width=90,HLRwidth=False,PSFf=1,
+def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PSFf=1,
     usePSF=True,timeout=300,verbose=False,PSF_file='tinytim_psf.fits',
     sigma_file='/sigma_meanexp_cutout.fits',data_file='/cutout.fits',
     save_name='rmssigmameanexp_w180_TESTING',
@@ -233,8 +233,9 @@ def run_galfit(row,survey='COSMOS',full_df=None,zp=26,width=90,HLRwidth=False,PS
     r = row
     ra = r.RA
     dec = r.DEC
+    print("***{}***".format(survey))
     if survey == 'COSMOS': IDname = 'NUMBER'
-    if survey == '3DHST': IDname = 'id' 
+    if survey == '3DHST': IDname = 'ID' 
     ID = int(r[IDname])
     # tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
     tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/'+survey+'/galfit_results/'+str(ID)
@@ -342,14 +343,17 @@ def run_galfit(row,survey='COSMOS',full_df=None,zp=26,width=90,HLRwidth=False,PS
     if usePSF:
         print "Using PSF"
         O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
-                        Pimg=PSF_file, Simg=tdir+sigma_file, Oimg=tdir+'/out.fits', ZP=zp, scale='0.06 0.06',PSFf=PSFf, convbox=convbox,
+                        Pimg=PSF_file, Simg=tdir+sigma_file, Oimg=tdir+'/out.fits', ZP=ZP, scale='0.06 0.06',PSFf=PSFf, convbox=convbox,
                        constr=constraint_file, badmask=badmask, sky=sky,skyINIT=sky_INIT)
         # convbox should be larger than PSF. f125_400 psf is (166,166)
     # else:
     #     O=gf.CreateFile(tdir+data_file, bounds, model,fout=tdir+'/input.feedme',\
     #                     Simg=tdir+sigma_file, ZP=zp, scale='0.06 0.06', PSFf=PSFf, convbox=convbox, constr=constraint_file,
     #                    badmask=badmask,sky=sky,skyINIT=sky_INIT)
-    p,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verbose, outfile=tdir+'/out.fits',timeout=timeout,cwd=tdir)
+    pout,oimg,mods,EV,chi2nu=gf.rungalfit(tdir+'/input.feedme',verb=verbose, outfile=tdir+'/out.fits',timeout=timeout,cwd=tdir)
+    # if verbose:
+    #     for l in pout:
+    #         print l
     if EV==124: print "***PROCESS TIMEOUT***"
     print '****',ID,'****'
     try: 
@@ -361,6 +365,7 @@ def run_galfit(row,survey='COSMOS',full_df=None,zp=26,width=90,HLRwidth=False,PS
         os.rename(tdir+'/galfit.01',tdir+'/galfit_'+save_name+'.params')
     except:
         print "***",ID,"Fit failed at GALFIT level***"
+        # return pout
         
 
     try:
@@ -394,19 +399,19 @@ def run_galfit(row,survey='COSMOS',full_df=None,zp=26,width=90,HLRwidth=False,PS
         print s_err_val
 
         if len(re_val)>1:
-#             EV+=2**2
+            EV+=2**2
             print 'ID',str(ID),'len(re_val)>1', len(re_val)>1
 
         if len(ar_val)>1:
-#             EV+=2**3
+            EV+=2**3
             print 'ID',str(ID),'len(ar_val)>1', len(ar_val)>1
 
         if len(n_val)>1:
-#             EV+=2**4
+            EV+=2**4
             print 'ID',str(ID),'len(n_val)>1', len(n_val)>1
 
         if len(m_val)>1:
-#             EV+=2**5
+            EV+=2**5
             print 'ID',str(ID),'len(m_val)>1', len(m_val)>1
             
         if len(s_val)>1:
@@ -480,7 +485,7 @@ def plot_by_ID(ID,save_name=None,survey='COSMOS'):
         return
     tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/'+survey+'/galfit_results/'+str(ID)
     
-    results_root = '/data/emiln/XLSSC122_GalPops/Analysis/COSMOS/Results/'
+    results_root = '/data/emiln/XLSSC122_GalPops/Analysis/'+survey+'/Results/'
     ttdf = pd.read_csv(results_root+save_name+'.csv')
     print ttdf[ttdf['ID'] == ID]
     try: 
