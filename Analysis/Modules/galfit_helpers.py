@@ -34,6 +34,8 @@ def load_HST_galaxy_catalog(filename):
     df['color'] = df['f105_0p8'] - df['f140_0p8']
     df['F140W'] = df['f140_kron']
     df['ID'] = df['phot-id']
+    df['RA'] = df['ra']
+    df['DEC'] = df['dec']
 
     # Compute r/r500 for each cluster member
     # Cluster Center
@@ -276,7 +278,8 @@ def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PS
     dec = r.DEC
     print("***{}***".format(survey))
     if survey == 'COSMOS': IDname = 'NUMBER'
-    if survey == '3DHST': IDname = 'ID' 
+    if survey == '3DHST': IDname = 'ID'
+    if survey == 'HST': IDname = 'ID' 
     ID = int(r[IDname])
     # tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/COSMOS/galfit_results/'+str(ID)
     tdir = '/data/emiln/XLSSC122_GalPops/Data/Products/'+survey+'/galfit_results/'+str(ID)
@@ -285,7 +288,11 @@ def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PS
         print "Using bad pixel mask..."
         badmask = tdir+badmask
     if useDYNMAG:
-        if survey == '3DHST':
+        if survey == 'HST':
+            MAG_INIT=np.round(r.F140W,decimals=2)
+            og_mag=MAG_INIT
+            print "Initializing",str(ID),"with F140W Kron magnitude:", MAG_INIT
+        elif survey == '3DHST':
             MAG_INIT=np.round(r.F140W,decimals=2)
             og_mag=MAG_INIT
             print "Initializing",str(ID),"with F140W Kron magnitude:", MAG_INIT
@@ -336,6 +343,7 @@ def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PS
     else: 
         if survey == 'COSMOS': width = int(np.ceil(HLRwidth*r.HLR))
         if survey == '3DHST': width = int(np.ceil(HLRwidth*r.flux_radius))
+        if survey == 'HST': width = int(np.ceil(HLRwidth*r.asec_fwhm/0.06))
         bounds = [CX-width,CX+width,CY-width,CY+width]
         bounds2 = [X-width,X+width,Y-width,Y+width]
         print "Cutoutwidth (pixels) for ID",str(ID),":", width*2
@@ -359,6 +367,7 @@ def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PS
         NY = r.Y - Y + image_width
         if useDYNMAG:
             if survey == '3DHST': MAG_INIT=np.round(r.F140W,decimals=2)
+            if survey == 'HST': MAG_INIT=np.round(r.F140W,decimals=2)
             if survey == 'COSMOS': MAG_INIT=np.round(r.F125W_Kron,decimals=2)
             if np.isnan(MAG_INIT):
                 MAG_INIT=og_mag # Initialize with MAG of primary target
