@@ -15,6 +15,47 @@ from astropy.table import Table, hstack, join
 import multiprocessing as mp
 import logging as log
 
+def load_HST_galaxy_catalog(filename):
+    df = pd.read_csv(filename,delim_whitespace=True)
+    df['gold_cluster'] = 0
+    df['gold_foreground'] = 0
+    df['silver_cluster'] = 0
+    # df.columns.values
+    # print df
+    df['(f140)kron'] = df['f140_kron']
+    for i,r in df.iterrows():
+        if (r['member1']>0.5) and (r['(f140)kron']<24 or (r['(f140)kron']<24.5 and r['em-code']==1)):
+            df.at[i,'gold_cluster'] = 1
+        if (r['member1']<0.5 and r['member1']>0.1) and (r['(f140)kron']<24 or (r['(f140)kron']<24.5 and r['em-code']==1)):
+            df.at[i,'silver_cluster'] = 1
+        if (r['member2']>0.5) and (r['(f140)kron']<24 or (r['(f140)kron']<24.5 and r['em-code']==1)):
+            df.at[i,'gold_foreground'] = 1  
+
+    df['color'] = df['f105_0p8'] - df['f140_0p8']
+    df['F140W'] = df['f140_kron']
+    df['ID'] = df['phot-id']
+
+    # Compute r/r500 for each cluster member
+    # Cluster Center
+    cluster_ra = 34.434125
+    cluster_dec = -3.7587388
+    r500 = 35 # arcsec
+    df['r_center'] = np.sqrt((df['ra']-cluster_ra)**2 + (df['dec']-cluster_dec)**2)*3600./r500
+
+    f140_file = '/data/emiln/XLSSC122_GalPops/Data/HST/Raw/xlssuj0217-0345-f140w_drz_sci.fits'
+    hdulist = fits.open(f140_file)
+    w = wcs.WCS(hdulist[0].header)
+    # df = pd.read_csv(cat_file,delim_whitespace=True)
+    df['X'] = w.wcs_world2pix(df['ra'],df['dec'], 1)[0]
+    df['Y'] = w.wcs_world2pix(df['ra'],df['dec'], 1)[1]
+
+    members1 = df[df['gold_cluster']==1]
+    members2 = df[df['gold_foreground']==1]
+    members1s = df[df['silver_cluster']==1]
+
+    members = df[(df['gold_cluster']==1) | (df['silver_cluster']==1)]
+
+    return df, members
 
 def load_3DHST_galaxy_catalog(filename, mag='F140W', magthresh=24, z=2.00,
     z_thresh=None, goodfit=True, overwrite=False, verbose=True):
