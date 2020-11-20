@@ -249,7 +249,10 @@ def run_galfit_parallel(params,survey='COSMOS',fit_df=None,full_df=None,ZP=26,
     output = [p.get() for p in results]
     pool.close()
 
-    new_df = pd.DataFrame(output,columns=['ID','ra','dec','re','ar','n','mag','sky','chi2nu','ErrorValue']) 
+    # new_df = pd.DataFrame(output,columns=['ID','ra','dec','re','ar','n','mag','sky','chi2nu','ErrorValue']) 
+    new_df = pd.DataFrame(output,
+                        columns=['ID','ra','dec','re','re_err','ar','ar_err','n','n_err',
+                                'mag','mag_err','sky','sky_err','chi2nu','ErrorValue']) 
     # ErrorValue of 124 = process timeout, 1 = GALFIT exception
     # results_root = '/data/emiln/XLSSC122_GalPops/Analysis/COSMOS/Results/'
     results_root = '/data/emiln/XLSSC122_GalPops/Analysis/'+survey+'/Results/'
@@ -343,7 +346,7 @@ def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PS
     else: 
         if survey == 'COSMOS': width = int(np.ceil(HLRwidth*r.HLR))
         if survey == '3DHST': width = int(np.ceil(HLRwidth*r.flux_radius))
-        if survey == 'HST': width = int(np.ceil(HLRwidth*r.asec_fwhm/0.06))
+        if survey == 'HST': width = int(np.ceil(HLRwidth*r.asec_fwhm/2/0.06))
         bounds = [CX-width,CX+width,CY-width,CY+width]
         bounds2 = [X-width,X+width,Y-width,Y+width]
         print "Cutoutwidth (pixels) for ID",str(ID),":", width*2
@@ -515,7 +518,9 @@ def run_galfit(row,survey='COSMOS',full_df=None,ZP=26,width=90,HLRwidth=False,PS
         s_err = float(s_all[2])
         EV+=999
 
-    return ID,ra,dec, re, ar, n, m, s, chi2nu, EV
+    return ID,ra,dec, re, re_err, ar, ar_err, n, n_err, m, m_err, s, s_err, chi2nu, EV
+    # return ID,ra,dec, re, ar, n, m, s, chi2nu, EV
+
 
 def showme3(oimg,fignum=None):
     vm = np.percentile(oimg[1].data,99)
