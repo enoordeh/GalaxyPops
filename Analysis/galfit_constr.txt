@@ -1,0 +1,12 @@
+# Component/    parameter   constraint	Comment
+# operation	(see below)   range
+
+    1              n        0.2 to 8    # Soft constraint: Constrains the 
+					# sersic index n to within values 
+				        # from 0.7 to 5.
+
+    1              re        0.3 to 400
+
+    1              q        0.0001 to 1
+
+    1              mag        0 to 40
